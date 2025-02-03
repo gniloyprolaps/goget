@@ -19,9 +19,8 @@ import (
 )
 
 const (
-	AppName          = "goget"
-	AppVersion       = "0.0.1a"
-	defaultThreads   = 50
+	AppName    = "goget"
+	AppVersion = "0.0.1a"
 	defaultChunkSize = 1024 * 1024
 	maxRetries       = 3
 	maxRedirects     = 15
@@ -39,6 +38,7 @@ var defaultHeaders = []string{
 
 const (
 	ParamUrl           = "URL для загрузки файла (https://...)"
+	ParamThreads       = "количество потоков на загрузку (максимальных соединений на хост будет вдвое больше)"
 	ParamDir           = "путь куда будет сохраняет скачанный файл (/home/user/downloads)"
 	ParamHeaders       = "заголовки в формате curl (можно указать несколько раз: -H 'Key: Value')"
 	ParamVersion       = "показать версию программы"
@@ -74,14 +74,14 @@ type DownloadPart struct {
 
 var startTime = time.Now()
 
-func createOptimizedClient() *http.Client {
+func createOptimizedClient(threads int) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     30 * time.Second,
 			DisableCompression:  true,
-			MaxConnsPerHost:     defaultThreads * 2,
+			MaxConnsPerHost:     threads * 2,
 		},
 		Timeout: 5 * time.Minute,
 	}
@@ -149,7 +149,7 @@ func DownloadFile(config DownloadConfig) error {
 		return fmt.Errorf("%s: %v", ErrCreateOutputDir, err)
 	}
 
-	fileName, err := getFileNameWithFastRedirects(config.URL)
+	fileName, err := getFileNameWithFastRedirects(config.URL, config.Threads)
 	if err != nil {
 		log.Printf("%s: %v", WarnNoAutoFileName, err)
 		fileName = path.Base(config.URL)
@@ -162,7 +162,7 @@ func DownloadFile(config DownloadConfig) error {
 	}
 	defer file.Close()
 
-	client := createOptimizedClient()
+	client := createOptimizedClient(config.Threads)
 
 	totalSize, err := determineFileSize(client, config.URL, config.Headers)
 	if err != nil {
@@ -208,7 +208,7 @@ func DownloadFile(config DownloadConfig) error {
 		go func() {
 			defer wg.Done()
 
-			localClient := createOptimizedClient()
+			localClient := createOptimizedClient(config.Threads)
 
 			for part := range partsChan {
 				var lastErr error
@@ -310,7 +310,7 @@ func (w *fastFileWriter) Write(p []byte) (int, error) {
 }
 
 func downloadUnknownSize(config DownloadConfig, file *os.File) error {
-	client := createOptimizedClient()
+	client := createOptimizedClient(config.Threads)
 	resp, err := client.Get(config.URL)
 	if err != nil {
 		return err
@@ -342,8 +342,8 @@ func extractFilenameFromContentDisposition(contentDisposition string) string {
 	return ""
 }
 
-func getFileNameWithFastRedirects(urlStr string) (string, error) {
-	client := createOptimizedClient()
+func getFileNameWithFastRedirects(urlStr string, threads int) (string, error) {
+	client := createOptimizedClient(threads)
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if filename := extractFilenameFromContentDisposition(req.Response.Header.Get("Content-Disposition")); filename != "" {
 			return fmt.Errorf("%s: %s", InfNameFound, filename)
@@ -522,6 +522,7 @@ func main() {
 	showVersion := flag.Bool("v", false, ParamVersion)
 	link := flag.String("url", "", ParamUrl)
 	outputDir := flag.String("P", ".", ParamDir)
+	maxThreads := flag.Int("t", 8, ParamThreads)
 	var headers arrayFlags
 	flag.Var(&headers, "H", ParamHeaders)
 	flag.Parse()
@@ -540,7 +541,7 @@ func main() {
 	config := DownloadConfig{
 		URL:       *link,
 		OutputDir: *outputDir,
-		Threads:   defaultThreads,
+		Threads:   *maxThreads,
 		ChunkSize: defaultChunkSize,
 		Headers:   mergeHeaders(headers),
 	}
