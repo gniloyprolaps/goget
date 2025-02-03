@@ -21,7 +21,7 @@ import (
 const (
 	AppName          = "goget"
 	AppVersion       = "0.0.1a"
-	defaultThreads   = 16
+	defaultThreads   = 50
 	defaultChunkSize = 1024 * 1024
 	maxRetries       = 3
 	maxRedirects     = 15
